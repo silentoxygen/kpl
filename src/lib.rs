@@ -4,56 +4,48 @@ pub mod dev;
 pub mod errors;
 pub mod kube;
 pub mod logging;
+pub mod merge;
 pub mod podwatch;
+pub mod stream;
 pub mod types;
 
 use tokio::sync::mpsc;
 
 use crate::config::Config;
 use crate::errors::{AppError, AppResult};
-use crate::types::PodCommand;
+use crate::types::{LogEvent, PodCommand};
 
 pub async fn run(config: Config) -> AppResult<()> {
-    let (tx, mut rx) = mpsc::channel::<PodCommand>(128);
+    // Control-plane: pod lifecycle commands
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<PodCommand>(128);
+
+    // Data-plane: log events (bounded for backpressure safety)
+    let (log_tx, log_rx) = mpsc::channel::<LogEvent>(config.buffer);
 
     // Start the appropriate "pod source" depending on mode.
     let watcher = if config.dev_mode {
-        crate::dev::pods::spawn_dev_pods(config.namespace.clone(), tx)
+        crate::dev::pods::spawn_dev_pods(config.namespace.clone(), cmd_tx)
     } else {
         let client = crate::kube::client::make_client().await?;
         crate::podwatch::watcher::spawn_pod_watcher(
             client,
             config.namespace.clone(),
             config.selector.clone(),
-            tx,
+            cmd_tx,
         )
     };
 
-    // For Slice 2/Slice 2.1: just print lifecycle decisions.
-    // Slice 3 will turn StartPod/StopPod into stream task orchestration.
-    while let Some(cmd) = rx.recv().await {
-        match cmd {
-            PodCommand::StartPod { pod, containers } => {
-                tracing::info!(
-                    namespace = %pod.namespace,
-                    pod = %pod.name,
-                    uid = %pod.uid,
-                    containers = ?containers,
-                    "StartPod"
-                );
-            }
-            PodCommand::StopPod { pod } => {
-                tracing::info!(
-                    namespace = %pod.namespace,
-                    pod = %pod.name,
-                    uid = %pod.uid,
-                    "StopPod"
-                );
-            }
-        }
+    // Single stdout writer / merger task
+    tokio::spawn(crate::merge::output::run_merger(log_rx, config.output));
+
+    // Supervisor: turns PodCommand into per-container stream tasks
+    let mut supervisor = crate::stream::supervisor::StreamSupervisor::new(log_tx);
+
+    while let Some(cmd) = cmd_rx.recv().await {
+        supervisor.handle_command(cmd);
     }
 
-    // If rx closes, watcher may still be running; await it so errors surface.
+    // If cmd_rx closes, watcher may still be running; await it so errors surface.
     match watcher.await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(e),
