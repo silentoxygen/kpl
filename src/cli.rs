@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(short = 'l', long = "selector")]
     pub selector: String,
 
+    /// Run in dev mode (no Kubernetes cluster required)
+    #[arg(long = "dev", default_value_t = false)]
+    pub dev: bool,
+
     /// Stream logs from all containers in each pod (default: true)
     #[arg(long = "all-containers", default_value_t = true)]
     pub all_containers: bool,

@@ -6,6 +6,8 @@ pub struct Config {
     pub namespace: String,
     pub selector: String,
 
+    pub dev_mode: bool,
+
     pub all_containers: bool,
     pub container: Option<String>,
 
@@ -68,6 +70,8 @@ impl TryFrom<Cli> for Config {
         Ok(Config {
             namespace,
             selector: cli.selector,
+
+            dev_mode: cli.dev,
 
             all_containers,
             container: cli.container,
