@@ -21,3 +21,9 @@ pub enum AppError {
     #[error("{0}")]
     Other(String),
 }
+
+impl From<kube_runtime::watcher::Error> for AppError {
+    fn from(e: kube_runtime::watcher::Error) -> Self {
+        AppError::Other(format!("watcher error: {e}"))
+    }
+}

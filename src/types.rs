@@ -16,6 +16,19 @@ pub struct StreamKey {
     pub container: String,
 }
 
+/// Control-plane commands emitted by the pod watcher and consumed by the supervisor.
+#[derive(Clone, Debug)]
+pub enum PodCommand {
+    /// Start streaming for the given pod. Containers are resolved from Pod spec.
+    StartPod {
+        pod: PodKey,
+        containers: Vec<String>,
+    },
+
+    /// Stop streaming for the given pod (best-effort).
+    StopPod { pod: PodKey },
+}
+
 /// Event produced by streamers and consumed by merger/output.
 /// For v1: timestamp is "ingest time" at the client.
 #[derive(Clone, Debug, Serialize)]
