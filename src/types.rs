@@ -1,37 +1,31 @@
 use serde::Serialize;
 use time::OffsetDateTime;
 
-/// Pod identity (use UID to avoid confusing replaced pods).
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PodKey {
     pub namespace: String,
     pub name: String,
     pub uid: String,
 }
 
-/// Stream identity = Pod + Container.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StreamKey {
     pub pod: PodKey,
     pub container: String,
 }
 
-/// Control-plane commands emitted by the pod watcher and consumed by the supervisor.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum PodCommand {
-    /// Start streaming for the given pod. Containers are resolved from Pod spec.
     StartPod {
         pod: PodKey,
         containers: Vec<String>,
     },
-
-    /// Stop streaming for the given pod (best-effort).
-    StopPod { pod: PodKey },
+    StopPod {
+        pod: PodKey,
+    },
 }
 
-/// Event produced by streamers and consumed by merger/output.
-/// For v1: timestamp is "ingest time" at the client.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LogEvent {
     #[serde(with = "time::serde::rfc3339")]
     pub ts: OffsetDateTime,

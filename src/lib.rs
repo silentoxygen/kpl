@@ -16,14 +16,10 @@ use crate::errors::{AppError, AppResult};
 use crate::types::{LogEvent, PodCommand};
 
 pub async fn run(config: Config) -> AppResult<()> {
-    // Control-plane: pod lifecycle commands
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<PodCommand>(128);
-
-    // Data-plane: log events (bounded for backpressure safety)
     let (log_tx, log_rx) = mpsc::channel::<LogEvent>(config.buffer);
 
-    // Start the appropriate "pod source" depending on mode.
-    let watcher = if config.dev_mode {
+    let watcher_handle = if config.dev_mode {
         crate::dev::pods::spawn_dev_pods(config.namespace.clone(), cmd_tx)
     } else {
         let client = crate::kube::client::make_client().await?;
@@ -35,20 +31,54 @@ pub async fn run(config: Config) -> AppResult<()> {
         )
     };
 
-    // Single stdout writer / merger task
-    tokio::spawn(crate::merge::output::run_merger(log_rx, config.output));
+    // We'll await this exactly once.
+    let mut watcher = Some(watcher_handle);
 
-    // Supervisor: turns PodCommand into per-container stream tasks
-    let mut supervisor = crate::stream::supervisor::StreamSupervisor::new(log_tx);
+    let mut supervisor = crate::stream::supervisor::StreamSupervisor::new(
+        log_tx,
+        config.dev_rate_ms,
+        config.dev_lines,
+    );
 
-    while let Some(cmd) = cmd_rx.recv().await {
-        supervisor.handle_command(cmd);
+    // Output runs on the current task (stdout lock is !Send).
+    let output_cfg = config.output;
+
+    // Run three things concurrently; whichever finishes first triggers shutdown.
+    tokio::select! {
+        // Merger owns stdout; exits on broken pipe or channel close.
+        res = crate::merge::output::run_merger(log_rx, output_cfg) => {
+            if let Err(e) = res {
+                return Err(AppError::Other(format!("output writer failed: {e}")));
+            }
+        }
+
+        // Supervisor consumes pod lifecycle commands and spawns/cancels stream tasks.
+        _ = async {
+            while let Some(cmd) = cmd_rx.recv().await {
+                supervisor.handle_command(cmd);
+            }
+        } => { }
+
+        // Watcher: surface errors if it fails.
+        join = async {
+            watcher.take().unwrap().await
+        } => {
+            match join {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(AppError::Other(format!("pod watcher task failed: {e}"))),
+            }
+        }
     }
 
-    // If cmd_rx closes, watcher may still be running; await it so errors surface.
-    match watcher.await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(AppError::Other(format!("pod watcher task failed: {e}"))),
+    // If select! exited due to merger/supervisor finishing, still await watcher to surface errors.
+    if let Some(w) = watcher.take() {
+        match w.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(AppError::Other(format!("pod watcher task failed: {e}"))),
+        }
+    } else {
+        Ok(())
     }
 }

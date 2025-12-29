@@ -1,27 +1,40 @@
+use std::io::{self, Write};
+
 use tokio::sync::mpsc;
 
-use crate::config::OutputMode;
+use crate::config::{OutputConfig, OutputMode};
+use crate::merge::format::LineFormatter;
 use crate::types::LogEvent;
 
-pub async fn run_merger(mut rx: mpsc::Receiver<LogEvent>, mode: OutputMode) {
+pub async fn run_merger(mut rx: mpsc::Receiver<LogEvent>, output: OutputConfig) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    let formatter = LineFormatter::new(output.human);
+
     while let Some(ev) = rx.recv().await {
-        match mode {
+        let write_result: io::Result<()> = match output.mode {
             OutputMode::Human => {
-                println!(
-                    "{} {} {} {}",
-                    ev.ts
-                        .format(&time::format_description::well_known::Rfc3339)
-                        .unwrap(),
-                    ev.pod,
-                    ev.container,
-                    ev.message
-                );
+                let line = formatter.format_human(&ev);
+                out.write_all(line.as_bytes())?;
+                out.write_all(b"\n")?;
+                Ok(())
             }
             OutputMode::Json => {
-                if let Ok(line) = serde_json::to_string(&ev) {
-                    println!("{line}");
-                }
+                serde_json::to_writer(&mut out, &ev)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                out.write_all(b"\n")?;
+                Ok(())
             }
+        };
+
+        if let Err(e) = write_result {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(e);
         }
     }
+
+    Ok(())
 }

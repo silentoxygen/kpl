@@ -1,11 +1,18 @@
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
-use crate::types::{LogEvent, PodKey};
 use time::OffsetDateTime;
 
-pub async fn dev_stream(pod: PodKey, container: String, tx: mpsc::Sender<LogEvent>) {
-    let mut counter = 0u64;
+use crate::types::{LogEvent, PodKey};
+
+pub async fn dev_stream(
+    pod: PodKey,
+    container: String,
+    tx: mpsc::Sender<LogEvent>,
+    rate_ms: u64,
+    max_lines: Option<u64>,
+) {
+    let mut counter: u64 = 0;
 
     loop {
         counter += 1;
@@ -19,10 +26,15 @@ pub async fn dev_stream(pod: PodKey, container: String, tx: mpsc::Sender<LogEven
         };
 
         if tx.send(event).await.is_err() {
-            // merger is gone → stop
             break;
         }
 
-        sleep(Duration::from_millis(500)).await;
+        if let Some(max) = max_lines {
+            if counter >= max {
+                break;
+            }
+        }
+
+        sleep(Duration::from_millis(rate_ms)).await;
     }
 }
