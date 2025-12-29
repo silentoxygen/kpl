@@ -1,24 +1,40 @@
 use std::collections::HashMap;
 
+use kube::Client;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::types::{LogEvent, PodCommand, StreamKey};
 
+#[derive(Clone)]
+pub enum StreamBackend {
+    Dev {
+        rate_ms: u64,
+        max_lines: Option<u64>,
+    },
+    Kube {
+        client: Client,
+    },
+}
+
 pub struct StreamSupervisor {
     streams: HashMap<StreamKey, CancellationToken>,
     log_tx: mpsc::Sender<LogEvent>,
-    dev_rate_ms: u64,
-    dev_lines: Option<u64>,
+    backend: StreamBackend,
+    shutdown: CancellationToken,
 }
 
 impl StreamSupervisor {
-    pub fn new(log_tx: mpsc::Sender<LogEvent>, dev_rate_ms: u64, dev_lines: Option<u64>) -> Self {
+    pub fn new(
+        log_tx: mpsc::Sender<LogEvent>,
+        backend: StreamBackend,
+        shutdown: CancellationToken,
+    ) -> Self {
         Self {
             streams: HashMap::new(),
             log_tx,
-            dev_rate_ms,
-            dev_lines,
+            backend,
+            shutdown,
         }
     }
 
@@ -35,35 +51,61 @@ impl StreamSupervisor {
                         continue;
                     }
 
-                    let cancel = CancellationToken::new();
-                    let child = cancel.child_token();
+                    let token = self.shutdown.child_token();
+                    let stream_token = token.child_token();
 
                     let tx = self.log_tx.clone();
                     let pod_clone = pod.clone();
-                    let rate_ms = self.dev_rate_ms;
-                    let max_lines = self.dev_lines;
 
-                    tokio::spawn(async move {
-                        tokio::select! {
-                            _ = child.cancelled() => {}
-                            _ = crate::stream::dev::dev_stream(pod_clone, container, tx, rate_ms, max_lines) => {}
+                    match self.backend.clone() {
+                        StreamBackend::Dev { rate_ms, max_lines } => {
+                            tokio::spawn(async move {
+                                tokio::select! {
+                                    _ = stream_token.cancelled() => {}
+                                    _ = crate::stream::dev::dev_stream(
+                                        pod_clone,
+                                        container,
+                                        tx,
+                                        rate_ms,
+                                        max_lines,
+                                    ) => {}
+                                }
+                            });
                         }
-                    });
+                        StreamBackend::Kube { client } => {
+                            tokio::spawn(async move {
+                                crate::stream::kube::kube_stream(
+                                    client,
+                                    pod_clone,
+                                    container,
+                                    tx,
+                                    stream_token,
+                                )
+                                .await;
+                            });
+                        }
+                    }
 
-                    self.streams.insert(key, cancel);
+                    self.streams.insert(key, token);
                 }
             }
 
             PodCommand::StopPod { pod } => {
-                self.streams.retain(|key, cancel| {
+                self.streams.retain(|key, token| {
                     if key.pod == pod {
-                        cancel.cancel();
+                        token.cancel();
                         false
                     } else {
                         true
                     }
                 });
             }
+        }
+    }
+
+    pub fn shutdown_all(&mut self) {
+        for (_, token) in self.streams.drain() {
+            token.cancel();
         }
     }
 }
