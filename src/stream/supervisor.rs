@@ -8,13 +8,17 @@ use crate::types::{LogEvent, PodCommand, StreamKey};
 pub struct StreamSupervisor {
     streams: HashMap<StreamKey, CancellationToken>,
     log_tx: mpsc::Sender<LogEvent>,
+    dev_rate_ms: u64,
+    dev_lines: Option<u64>,
 }
 
 impl StreamSupervisor {
-    pub fn new(log_tx: mpsc::Sender<LogEvent>) -> Self {
+    pub fn new(log_tx: mpsc::Sender<LogEvent>, dev_rate_ms: u64, dev_lines: Option<u64>) -> Self {
         Self {
             streams: HashMap::new(),
             log_tx,
+            dev_rate_ms,
+            dev_lines,
         }
     }
 
@@ -33,13 +37,16 @@ impl StreamSupervisor {
 
                     let cancel = CancellationToken::new();
                     let child = cancel.child_token();
+
                     let tx = self.log_tx.clone();
                     let pod_clone = pod.clone();
+                    let rate_ms = self.dev_rate_ms;
+                    let max_lines = self.dev_lines;
 
                     tokio::spawn(async move {
                         tokio::select! {
                             _ = child.cancelled() => {}
-                            _ = crate::stream::dev::dev_stream(pod_clone, container, tx) => {}
+                            _ = crate::stream::dev::dev_stream(pod_clone, container, tx, rate_ms, max_lines) => {}
                         }
                     });
 

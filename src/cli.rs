@@ -1,14 +1,17 @@
 use clap::{Parser, ValueEnum};
 
-/// kube-podlog: fast multi-pod Kubernetes log tailer.
 #[derive(Debug, Clone, Parser)]
-#[command(name = "kube-podlog", version, about)]
+#[command(
+    name = "kube-podlog",
+    version,
+    about = "Fast multi-pod Kubernetes log tailer (WIP)"
+)]
 pub struct Cli {
-    /// Namespace to search in (defaults to current context namespace; fallback: "default")
+    /// Kubernetes namespace (default: "default")
     #[arg(short = 'n', long = "namespace")]
     pub namespace: Option<String>,
 
-    /// Label selector, e.g. app=web,tier=frontend
+    /// Label selector (e.g. app=web,tier=frontend)
     #[arg(short = 'l', long = "selector")]
     pub selector: String,
 
@@ -16,60 +19,37 @@ pub struct Cli {
     #[arg(long = "dev", default_value_t = false)]
     pub dev: bool,
 
-    /// Stream logs from all containers in each pod (default: true)
-    #[arg(long = "all-containers", default_value_t = true)]
-    pub all_containers: bool,
-
-    /// Disable the default all-containers behavior
-    #[arg(long = "no-all-containers", default_value_t = false)]
-    pub no_all_containers: bool,
-
-    /// Only stream a specific container (overrides all-containers)
-    #[arg(short = 'c', long = "container")]
-    pub container: Option<String>,
-
-    /// Emit newline-delimited JSON objects (NDJSON)
+    /// Emit newline-delimited JSON (NDJSON) instead of human output
     #[arg(long = "json", default_value_t = false)]
     pub json: bool,
 
-    /// Prefix each line with an RFC3339 timestamp (default: true)
-    #[arg(long = "timestamps", default_value_t = true)]
-    pub timestamps: bool,
-
-    /// Disable timestamps
+    /// Disable timestamps in human output
     #[arg(long = "no-timestamps", default_value_t = false)]
     pub no_timestamps: bool,
 
-    /// Color mode for output
-    #[arg(long = "color", value_enum, default_value_t = ColorMode::Auto)]
-    pub color: ColorMode,
+    /// Disable colored output (human mode only)
+    #[arg(long = "no-color", default_value_t = false)]
+    pub no_color: bool,
 
-    /// Assign colors by pod or container
-    #[arg(long = "color-by", value_enum, default_value_t = ColorBy::Pod)]
-    pub color_by: ColorBy,
+    /// Colorize by "pod" or "container" (human mode only)
+    #[arg(long = "color-by", value_enum, default_value_t = ColorByArg::Pod)]
+    pub color_by: ColorByArg,
 
-    /// Global bounded event buffer size (backpressure-safe)
-    #[arg(long = "buffer", default_value_t = 2048)]
+    /// Bounded channel size for merged log events (backpressure safety)
+    #[arg(long = "buffer", default_value_t = 1024)]
     pub buffer: usize,
 
-    /// Optional cap on number of concurrent log streams
-    #[arg(long = "max-concurrency")]
-    pub max_concurrency: Option<usize>,
+    /// Dev mode: milliseconds between log lines per stream
+    #[arg(long = "dev-rate-ms", default_value_t = 500)]
+    pub dev_rate_ms: u64,
 
-    /// Increase verbosity (-v, -vv)
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
-    pub verbose: u8,
+    /// Dev mode: max number of lines per stream (useful for tests)
+    #[arg(long = "dev-lines")]
+    pub dev_lines: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ColorMode {
-    Auto,
-    Always,
-    Never,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ColorBy {
+pub enum ColorByArg {
     Pod,
     Container,
 }
