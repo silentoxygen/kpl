@@ -1,3 +1,4 @@
+use futures::AsyncBufReadExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{api::LogParams, Api, Client};
 use time::OffsetDateTime;
@@ -5,21 +6,22 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
-use futures::AsyncBufReadExt; // <-- IMPORTANT: futures, not tokio
+use crate::errors::AppError;
+use crate::types::{KubeLogOpts, LogEvent, PodKey};
 
-use crate::types::{LogEvent, PodKey};
-
-/// Stream logs for a single (pod, container) until cancelled.
-/// Reconnects on transient errors/EOF with backoff.
-/// For v1, we do NOT backfill old logs; we follow from "now".
 pub async fn kube_stream(
     client: Client,
     pod: PodKey,
     container: String,
+    opts: KubeLogOpts,
     tx: mpsc::Sender<LogEvent>,
+    fatal_tx: mpsc::Sender<AppError>,
     cancel: CancellationToken,
 ) {
-    let mut backoff = Backoff::new(Duration::from_millis(200), Duration::from_secs(5));
+    let mut backoff = Backoff::new(
+        Duration::from_millis(opts.reconnect_min_ms),
+        Duration::from_millis(opts.reconnect_max_ms),
+    );
 
     loop {
         if cancel.is_cancelled() {
@@ -30,8 +32,10 @@ pub async fn kube_stream(
 
         let lp = LogParams {
             follow: true,
-            timestamps: false,
+            timestamps: false, // v1 output timestamps are local unless we later parse kube timestamps
             container: Some(container.clone()),
+            since_seconds: opts.since_seconds,
+            tail_lines: opts.tail_lines,
             ..Default::default()
         };
 
@@ -41,16 +45,39 @@ pub async fn kube_stream(
                 r
             }
             Err(e) => {
-                tracing::warn!(
-                    namespace = %pod.namespace,
-                    pod = %pod.name,
-                    container = %container,
-                    error = %e,
-                    "log_stream failed; backing off"
-                );
-                let d = backoff.next_delay();
-                sleep_or_cancel(d, &cancel).await;
-                continue;
+                match classify_kube_error(&e) {
+                    KubeErrClass::Auth => {
+                        let _ = fatal_tx
+                            .send(AppError::Other(format!(
+                                "auth error streaming logs ({} {} {}): {e}",
+                                pod.namespace, pod.name, container
+                            )))
+                            .await;
+                        return;
+                    }
+                    KubeErrClass::NotFound => {
+                        // Pod doesn't exist: watcher should drive lifecycle; stop this stream.
+                        tracing::info!(
+                            namespace = %pod.namespace,
+                            pod = %pod.name,
+                            container = %container,
+                            "pod/container not found; stopping stream"
+                        );
+                        return;
+                    }
+                    KubeErrClass::Retry => {
+                        tracing::warn!(
+                            namespace = %pod.namespace,
+                            pod = %pod.name,
+                            container = %container,
+                            error = %e,
+                            "log_stream failed; backing off"
+                        );
+                        let d = backoff.next_delay_jittered();
+                        sleep_or_cancel(d, &cancel).await;
+                        continue;
+                    }
+                }
             }
         };
 
@@ -59,8 +86,6 @@ pub async fn kube_stream(
         loop {
             buf.clear();
 
-            // futures::AsyncBufReadExt::read_until is an async method returning a Future.
-            // We select on cancellation.
             let read_fut = reader.read_until(b'\n', &mut buf);
 
             let res = tokio::select! {
@@ -90,7 +115,7 @@ pub async fn kube_stream(
                     };
 
                     if tx.send(ev).await.is_err() {
-                        return; // merger is gone
+                        return; // output/merger gone
                     }
                 }
                 Err(e) => {
@@ -106,7 +131,7 @@ pub async fn kube_stream(
             }
         }
 
-        let d = backoff.next_delay();
+        let d = backoff.next_delay_jittered();
         sleep_or_cancel(d, &cancel).await;
     }
 }
@@ -126,6 +151,26 @@ fn trim_newline(bytes: &[u8]) -> &[u8] {
     &bytes[..end]
 }
 
+#[derive(Debug, Clone, Copy)]
+enum KubeErrClass {
+    Auth,
+    NotFound,
+    Retry,
+}
+
+fn classify_kube_error(e: &kube::Error) -> KubeErrClass {
+    match e {
+        kube::Error::Api(ae) => match ae.code {
+            401 | 403 => KubeErrClass::Auth,
+            404 => KubeErrClass::NotFound,
+            429 => KubeErrClass::Retry,
+            c if c >= 500 => KubeErrClass::Retry,
+            _ => KubeErrClass::Retry,
+        },
+        _ => KubeErrClass::Retry,
+    }
+}
+
 struct Backoff {
     cur: Duration,
     min: Duration,
@@ -141,9 +186,13 @@ impl Backoff {
         self.cur = self.min;
     }
 
-    fn next_delay(&mut self) -> Duration {
-        let d = self.cur;
+    fn next_delay_jittered(&mut self) -> Duration {
+        // deterministic-ish jitter without adding rand:
+        // uses current time nanos modulo a window.
+        let base = self.cur;
         self.cur = std::cmp::min(self.cur * 2, self.max);
-        d
+
+        let nanos = (time::OffsetDateTime::now_utc().nanosecond() % 250_000_000) as u64; // 0..250ms
+        base + Duration::from_nanos(nanos)
     }
 }

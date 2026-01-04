@@ -1,11 +1,14 @@
-use kube_podlog::{cli::Cli, config::Config, errors::AppResult};
+use clap::Parser;
+
+use kube_podlog::cli::Cli;
+use kube_podlog::config::Config;
 
 #[tokio::main]
-async fn main() -> AppResult<()> {
+async fn main() -> kube_podlog::errors::AppResult<()> {
     kube_podlog::logging::init();
 
-    let cli = <Cli as clap::Parser>::parse();
-    let config = Config::try_from(cli)?;
+    let cli = Cli::parse();
+    let config: Config = cli.into(); // <-- infallible conversion, no `?`
 
     kube_podlog::run(config).await
 }
