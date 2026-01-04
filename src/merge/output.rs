@@ -21,8 +21,7 @@ pub async fn run_merger(mut rx: mpsc::Receiver<LogEvent>, output: OutputConfig) 
                 Ok(())
             }
             OutputMode::Json => {
-                serde_json::to_writer(&mut out, &ev)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                serde_json::to_writer(&mut out, &ev).map_err(io::Error::other)?;
                 out.write_all(b"\n")?;
                 Ok(())
             }
