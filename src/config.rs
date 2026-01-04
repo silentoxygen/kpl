@@ -1,52 +1,22 @@
-use std::io::IsTerminal;
+use crate::cli::{Cli, ColorByArg, TimestampSourceArg};
+use crate::types::{
+    ColorBy, DevOpts, KubeLogOpts, OutputConfig, OutputMode, RuntimeOpts, TimestampSource,
+};
 
-use crate::cli::{Cli, ColorByArg};
-use crate::errors::{AppError, AppResult};
-
-#[derive(Clone, Copy, Debug)]
-pub enum OutputMode {
-    Human,
-    Json,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum ColorBy {
-    Pod,
-    Container,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct HumanFormat {
-    pub timestamps: bool,
-    pub color: bool,
-    pub color_by: ColorBy,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct OutputConfig {
-    pub mode: OutputMode,
-    pub human: HumanFormat,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub namespace: String,
     pub selector: String,
     pub dev_mode: bool,
 
+    pub dev: DevOpts,
+    pub kube: KubeLogOpts,
+    pub runtime: RuntimeOpts,
     pub output: OutputConfig,
-    pub buffer: usize,
-
-    pub dev_rate_ms: u64,
-    pub dev_lines: Option<u64>,
 }
 
-impl TryFrom<Cli> for Config {
-    type Error = AppError;
-
-    fn try_from(cli: Cli) -> AppResult<Self> {
-        let namespace = cli.namespace.unwrap_or_else(|| "default".to_string());
-
+impl From<Cli> for Config {
+    fn from(cli: Cli) -> Self {
         let mode = if cli.json {
             OutputMode::Json
         } else {
@@ -58,29 +28,38 @@ impl TryFrom<Cli> for Config {
             ColorByArg::Container => ColorBy::Container,
         };
 
-        // Default: enable color only if stdout is a terminal and user didn't disable it.
-        let stdout_is_tty = std::io::stdout().is_terminal();
-        let enable_color = !cli.no_color && stdout_is_tty;
-
-        let output = OutputConfig {
-            mode,
-            human: HumanFormat {
-                timestamps: !cli.no_timestamps,
-                color: enable_color,
-                color_by,
-            },
+        let ts_source = match cli.timestamps_source {
+            TimestampSourceArg::Local => TimestampSource::Local,
+            TimestampSourceArg::Kube => TimestampSource::Kube,
         };
 
-        Ok(Self {
-            namespace,
+        Self {
+            namespace: cli.namespace,
             selector: cli.selector,
             dev_mode: cli.dev,
 
-            output,
-            buffer: cli.buffer,
+            dev: DevOpts {
+                rate_ms: cli.dev_rate_ms,
+                lines: cli.dev_lines,
+            },
 
-            dev_rate_ms: cli.dev_rate_ms,
-            dev_lines: cli.dev_lines,
-        })
+            kube: KubeLogOpts {
+                containers: cli.container,
+                since_seconds: cli.since_seconds,
+                tail_lines: cli.tail,
+                timestamps_source: ts_source,
+                reconnect_min_ms: cli.reconnect_min_ms,
+                reconnect_max_ms: cli.reconnect_max_ms,
+            },
+
+            runtime: RuntimeOpts { buffer: cli.buffer },
+
+            output: OutputConfig {
+                mode,
+                color: !cli.no_color,
+                color_by,
+                timestamps: !cli.no_timestamps,
+            },
+        }
     }
 }

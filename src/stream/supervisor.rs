@@ -4,7 +4,8 @@ use kube::Client;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::types::{LogEvent, PodCommand, StreamKey};
+use crate::errors::AppError;
+use crate::types::{KubeLogOpts, LogEvent, PodCommand, StreamKey};
 
 #[derive(Clone)]
 pub enum StreamBackend {
@@ -14,12 +15,14 @@ pub enum StreamBackend {
     },
     Kube {
         client: Client,
+        opts: KubeLogOpts,
     },
 }
 
 pub struct StreamSupervisor {
     streams: HashMap<StreamKey, CancellationToken>,
     log_tx: mpsc::Sender<LogEvent>,
+    fatal_tx: mpsc::Sender<AppError>,
     backend: StreamBackend,
     shutdown: CancellationToken,
 }
@@ -27,12 +30,14 @@ pub struct StreamSupervisor {
 impl StreamSupervisor {
     pub fn new(
         log_tx: mpsc::Sender<LogEvent>,
+        fatal_tx: mpsc::Sender<AppError>,
         backend: StreamBackend,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             streams: HashMap::new(),
             log_tx,
+            fatal_tx,
             backend,
             shutdown,
         }
@@ -51,13 +56,14 @@ impl StreamSupervisor {
                         continue;
                     }
 
+                    // Each stream gets its own cancellation token.
+                    // The token is a child of global shutdown.
                     let token = self.shutdown.child_token();
                     let stream_token = token.child_token();
 
                     let tx = self.log_tx.clone();
+                    let fatal = self.fatal_tx.clone();
                     let pod_clone = pod.clone();
-                    let rate_ms = self.dev_rate_ms;
-                    let max_lines = self.dev_lines;
 
                     match self.backend.clone() {
                         StreamBackend::Dev { rate_ms, max_lines } => {
@@ -74,13 +80,15 @@ impl StreamSupervisor {
                                 }
                             });
                         }
-                        StreamBackend::Kube { client } => {
+                        StreamBackend::Kube { client, opts } => {
                             tokio::spawn(async move {
                                 crate::stream::kube::kube_stream(
                                     client,
                                     pod_clone,
                                     container,
+                                    opts,
                                     tx,
+                                    fatal,
                                     stream_token,
                                 )
                                 .await;
