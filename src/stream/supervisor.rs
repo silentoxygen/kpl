@@ -56,6 +56,8 @@ impl StreamSupervisor {
 
                     let tx = self.log_tx.clone();
                     let pod_clone = pod.clone();
+                    let rate_ms = self.dev_rate_ms;
+                    let max_lines = self.dev_lines;
 
                     match self.backend.clone() {
                         StreamBackend::Dev { rate_ms, max_lines } => {
