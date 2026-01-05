@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use time::OffsetDateTime;
 
@@ -7,12 +7,6 @@ pub struct PodKey {
     pub namespace: String,
     pub name: String,
     pub uid: String,
-}
-
-impl fmt::Display for PodKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{} ({})", self.namespace, self.name, self.uid)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,77 +26,61 @@ pub enum PodCommand {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum TimestampSource {
-    Local,
-    Kube, // reserved for later when we enable kube timestamps parsing
-}
-
-impl TimestampSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TimestampSource::Local => "local",
-            TimestampSource::Kube => "kube",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ColorBy {
-    Pod,
-    Container,
-}
-
-impl ColorBy {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ColorBy::Pod => "pod",
-            ColorBy::Container => "container",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum OutputMode {
-    Human,
-    Json,
-}
-
 #[derive(Debug, Clone)]
-pub struct OutputConfig {
-    pub mode: OutputMode,
-    pub color: bool,
-    pub color_by: ColorBy,
-    pub timestamps: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct KubeLogOpts {
-    pub containers: Vec<String>, // if empty => all containers
-    pub since_seconds: Option<i64>,
-    pub tail_lines: Option<i64>,
-    pub timestamps_source: TimestampSource,
-    pub reconnect_min_ms: u64,
-    pub reconnect_max_ms: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct DevOpts {
-    pub rate_ms: u64,
-    pub lines: Option<u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RuntimeOpts {
-    pub buffer: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct LogEvent {
-    #[serde(with = "time::serde::rfc3339")]
     pub ts: OffsetDateTime,
     pub namespace: String,
     pub pod: String,
     pub container: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputMode {
+    Human,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ColorBy {
+    Pod,
+    Container,
+}
+
+impl fmt::Display for ColorBy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ColorBy::Pod => write!(f, "pod"),
+            ColorBy::Container => write!(f, "container"),
+        }
+    }
+}
+
+/// Whether to emit ANSI colors
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ColorMode {
+    Auto,
+    Always,
+    Never,
+}
+
+impl fmt::Display for ColorMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ColorMode::Auto => write!(f, "auto"),
+            ColorMode::Always => write!(f, "always"),
+            ColorMode::Never => write!(f, "never"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OutputConfig {
+    pub mode: OutputMode,
+    pub color_by: ColorBy,
+    pub color: ColorMode,
+    pub no_color: bool,
 }

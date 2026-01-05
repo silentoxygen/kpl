@@ -105,7 +105,6 @@ fn pick_containers(pod: &Pod, filter: &[String]) -> Vec<String> {
         .unwrap_or_default();
 
     if filter.is_empty() {
-        // Default: all containers
         return names;
     }
 

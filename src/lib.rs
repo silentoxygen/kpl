@@ -22,13 +22,10 @@ pub async fn run(config: Config) -> AppResult<()> {
     let shutdown_token: CancellationToken = shutdown.token();
     let monitor_shutdown: CancellationToken = shutdown_token.clone();
 
-    // Command channel (pod lifecycle)
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<PodCommand>(128);
 
-    // Log event channel
     let (log_tx, log_rx) = mpsc::channel(config.runtime.buffer);
 
-    // Spawn pod source (dev or kube)
     let watcher_handle = if config.dev_mode {
         crate::dev::pods::spawn_dev_pods(config.namespace.clone(), cmd_tx)
     } else {
@@ -42,14 +39,16 @@ pub async fn run(config: Config) -> AppResult<()> {
         )
     };
 
-    // Output merger config
     let output_cfg = config.output.clone();
 
-    // Stream supervisor backend
     let backend = if config.dev_mode {
         crate::stream::supervisor::StreamBackend::Dev {
             rate_ms: config.dev.rate_ms,
-            max_lines: config.dev.lines,
+            max_lines: if config.dev.lines == 0 {
+                None
+            } else {
+                Some(config.dev.lines)
+            },
         }
     } else {
         crate::stream::supervisor::StreamBackend::Kube {
@@ -67,7 +66,6 @@ pub async fn run(config: Config) -> AppResult<()> {
         shutdown_token.clone(),
     );
 
-    // Supervisor command loop (background)
     let cmd_loop_shutdown = shutdown_token.clone();
     let supervisor_task = tokio::spawn(async move {
         while let Some(cmd) = cmd_rx.recv().await {
@@ -79,7 +77,6 @@ pub async fn run(config: Config) -> AppResult<()> {
         supervisor
     });
 
-    // SIGTERM future (portable)
     #[cfg(unix)]
     let sigterm_fut = async {
         use tokio::signal::unix::{signal, SignalKind};
@@ -91,7 +88,6 @@ pub async fn run(config: Config) -> AppResult<()> {
     #[cfg(not(unix))]
     let sigterm_fut = async { std::future::pending::<()>().await };
 
-    // Monitor task: triggers shutdown
     let monitor_task = tokio::spawn(async move {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -113,11 +109,8 @@ pub async fn run(config: Config) -> AppResult<()> {
         }
     });
 
-    // Foreground output merger (stdout lock is !Send)
-    let merger_res =
-        crate::merge::output::run_merger(log_rx, output_cfg, shutdown_token.clone()).await;
+    let merger_res = crate::merge::output::run_merger(log_rx, output_cfg).await;
 
-    // Cleanup
     shutdown_token.cancel();
 
     let mut supervisor = match supervisor_task.await {
@@ -125,12 +118,12 @@ pub async fn run(config: Config) -> AppResult<()> {
         Err(e) => {
             tracing::error!(error=%e, "supervisor task failed");
             let _ = monitor_task.await;
-            return merger_res;
+            return Ok(merger_res?);
         }
     };
     supervisor.shutdown_all();
 
     let _ = monitor_task.await;
 
-    merger_res
+    Ok(merger_res?)
 }

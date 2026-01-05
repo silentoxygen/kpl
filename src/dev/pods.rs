@@ -17,7 +17,6 @@ pub fn spawn_dev_pods(
             uid: "dev-uid-1".to_string(),
         };
 
-        // Pod appears
         tx.send(PodCommand::StartPod {
             pod: pod.clone(),
             containers: vec!["app".to_string(), "sidecar".to_string()],
@@ -27,7 +26,6 @@ pub fn spawn_dev_pods(
 
         sleep(Duration::from_secs(5)).await;
 
-        // Pod restarts (UID change)
         tracing::info!("simulating pod restart");
 
         tx.send(PodCommand::StopPod { pod: pod.clone() }).await.ok();
