@@ -4,7 +4,7 @@ use crate::types::{ColorBy, ColorMode};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "kube-podlog",
+    name = "kpl",
     version,
     about = "Fast multi-pod Kubernetes log tailer"
 )]
