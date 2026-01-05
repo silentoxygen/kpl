@@ -1,10 +1,10 @@
 [package]
-name = "kube-podlog"
+name = "kpl"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Fast multi-pod Kubernetes log tailer (kubectl logs -f, but better)"
-repository = "https://github.com/your-org/kube-podlog"
+repository = "https://github.com/silentoxygen/kpl"
 readme = "README.md"
 rust-version = "1.78"
 

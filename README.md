@@ -1,6 +1,6 @@
 # KPL (kube-podlog)
 
-kube-podlog is an early-stage Rust project exploring a faster, more reliable
+KPL (kube-podlog) is an early-stage Rust project exploring a faster, more reliable
 alternative to `kubectl logs -f` for streaming logs from multiple Kubernetes
 pods.
 

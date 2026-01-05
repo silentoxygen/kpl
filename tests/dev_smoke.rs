@@ -2,7 +2,7 @@ use assert_cmd::prelude::*;
 use std::process::Command;
 
 fn bin() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("kube-podlog"))
+    Command::new(assert_cmd::cargo::cargo_bin!("kpl"))
 }
 
 #[test]
