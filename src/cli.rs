@@ -1,16 +1,6 @@
 use clap::{Parser, ValueEnum};
 
-#[derive(Debug, Clone, ValueEnum)]
-pub enum ColorByArg {
-    Pod,
-    Container,
-}
-
-#[derive(Debug, Clone, ValueEnum)]
-pub enum TimestampSourceArg {
-    Local,
-    Kube,
-}
+use crate::types::{ColorBy, ColorMode};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -19,68 +9,73 @@ pub enum TimestampSourceArg {
     about = "Fast multi-pod Kubernetes log tailer"
 )]
 pub struct Cli {
-    /// Namespace (defaults to "default")
-    #[arg(short = 'n', long, default_value = "default")]
+    /// Namespace
+    #[arg(short = 'n', long = "namespace", default_value = "default")]
     pub namespace: String,
 
     /// Label selector (e.g. app=web,tier=frontend)
-    #[arg(short = 'l', long, required = true)]
+    #[arg(short = 'l', long = "selector")]
     pub selector: String,
 
-    /// Dev mode (no cluster required). Uses simulated pods/logs.
-    #[arg(long, default_value_t = false)]
-    pub dev: bool,
-
-    /// Dev mode: delay between lines per stream
-    #[arg(long, default_value_t = 500)]
-    pub dev_rate_ms: u64,
-
-    /// Dev mode: max lines per container (None = infinite)
-    #[arg(long)]
-    pub dev_lines: Option<u64>,
-
-    /// Channel buffer for log fan-in (backpressure control)
-    #[arg(long, default_value_t = 1024)]
-    pub buffer: usize,
-
-    /// Output: newline-delimited JSON objects
-    #[arg(long, default_value_t = false)]
+    /// Emit NDJSON log events
+    #[arg(long = "json", default_value_t = false)]
     pub json: bool,
 
-    /// Disable ANSI color
-    #[arg(long, default_value_t = false)]
-    pub no_color: bool,
+    /// Color mode: auto (tty only), always, never
+    #[arg(long = "color", value_enum, default_value_t = ColorModeArg::Auto)]
+    pub color: ColorModeArg,
 
-    /// Color assignment strategy
-    #[arg(long, value_enum, default_value_t = ColorByArg::Pod)]
+    /// Color by: pod or container
+    #[arg(long = "color-by", value_enum, default_value_t = ColorByArg::Pod)]
     pub color_by: ColorByArg,
 
-    /// Disable timestamps in human mode
-    #[arg(long, default_value_t = false)]
-    pub no_timestamps: bool,
+    /// Disable colors (overrides --color)
+    #[arg(long = "no-color", default_value_t = false)]
+    pub no_color: bool,
 
-    // ---- Kube log options ----
-    /// Limit logs to these container(s). Repeatable. If not set => all containers (default).
-    #[arg(long = "container")]
-    pub container: Vec<String>,
+    /// Dev mode: simulate pods without a cluster
+    #[arg(long = "dev", default_value_t = false)]
+    pub dev: bool,
 
-    /// Only return logs newer than this many seconds.
-    #[arg(long)]
-    pub since_seconds: Option<i64>,
+    /// Dev: milliseconds between lines
+    #[arg(long = "dev-rate-ms", default_value_t = 500)]
+    pub dev_rate_ms: u64,
 
-    /// Lines of recent log file to display (like kubectl --tail).
-    #[arg(long)]
-    pub tail: Option<i64>,
+    /// Dev: lines per container per phase
+    #[arg(long = "dev-lines", default_value_t = 10)]
+    pub dev_lines: u64,
+}
 
-    /// Timestamp source used in output. (local = time we received the line)
-    #[arg(long, value_enum, default_value_t = TimestampSourceArg::Local)]
-    pub timestamps_source: TimestampSourceArg,
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ColorModeArg {
+    Auto,
+    Always,
+    Never,
+}
 
-    /// Min reconnect backoff in ms (kube streams)
-    #[arg(long, default_value_t = 200)]
-    pub reconnect_min_ms: u64,
+impl From<ColorModeArg> for ColorMode {
+    fn from(v: ColorModeArg) -> Self {
+        match v {
+            ColorModeArg::Auto => ColorMode::Auto,
+            ColorModeArg::Always => ColorMode::Always,
+            ColorModeArg::Never => ColorMode::Never,
+        }
+    }
+}
 
-    /// Max reconnect backoff in ms (kube streams)
-    #[arg(long, default_value_t = 5000)]
-    pub reconnect_max_ms: u64,
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ColorByArg {
+    Pod,
+    Container,
+}
+
+impl From<ColorByArg> for ColorBy {
+    fn from(v: ColorByArg) -> Self {
+        match v {
+            ColorByArg::Pod => ColorBy::Pod,
+            ColorByArg::Container => ColorBy::Container,
+        }
+    }
 }
