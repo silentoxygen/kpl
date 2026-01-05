@@ -3,11 +3,7 @@ use clap::{Parser, ValueEnum};
 use crate::types::{ColorBy, ColorMode};
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "kpl",
-    version,
-    about = "Fast multi-pod Kubernetes log tailer"
-)]
+#[command(name = "kpl", version, about = "Fast multi-pod Kubernetes log tailer")]
 pub struct Cli {
     /// Namespace
     #[arg(short = 'n', long = "namespace", default_value = "default")]
